@@ -36,10 +36,11 @@ class OrderSchema(ma.Schema):
     order_date = fields.Date(required=True)
     status = fields.String(required=True)
     close_date = fields.String(required=False)
-    total = fields.Float(required=True, validate=validate.Range(min=0))
+    account_id = fields.Integer(required=True)
+    product_ids = fields.List(fields.Integer(),required=False)
 
     class Meta:
-        fields = ("order_date", "status", "close_date", "total", "id")
+        fields = ("order_date", "status", "close_date", "account_id", "product_ids", "id")
 
 class ProductSchema(ma.Schema):
     name = fields.String(required=True)
@@ -92,7 +93,7 @@ class Order(db.Model):
     order_date = db.Column(db.Date, nullable=False)
     status = db.Column(db.String(350), nullable=False)
     close_date = db.Column(db.Date)
-    order_total = db.Column(db.Float, nullable=False, default=0.0)
+    order_total = db.Column(db.Float(10,2), nullable=False, default=0.0)
     account_id = db.Column(db.Integer, db.ForeignKey('CustomerAccounts.id'))
 
     products = db.relationship('Product', secondary=customer_orders, backref=db.backref('orders', lazy=True))
@@ -235,7 +236,9 @@ def add_order():
                             status = order_data['status'],
                             close_date = order_data['close_date'],
                             order_total = order_data['order_total'],
-                            )
+                            account_id = order_data['account_id']
+                        )
+        
         new_order.products = products
         new_order.calculate_total()
 
@@ -266,6 +269,7 @@ def update_order(id):
 
         db.session.commit()
         return jsonify({'message': 'Order updated successfully.'}), 200
+    
     except ValidationError as err:
         return jsonify(err.messages), 400
 
