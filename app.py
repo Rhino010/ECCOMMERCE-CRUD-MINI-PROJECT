@@ -28,16 +28,17 @@ class CustomerSchema(ma.Schema):
 class CustomerAccountSchema(ma.Schema):
     username = fields.String(required=True)
     password = fields.String(required=True)
+    customer_id = fields.Integer(required=True)
 
     class Meta:
-        fields = ("username", "password", "id")
+        fields = ("username", "password", "customer_id", "orders", "id")
 
 class OrderSchema(ma.Schema):
     order_date = fields.Date(required=True)
     status = fields.String(required=True)
-    close_date = fields.String(required=False)
+    close_date = fields.Date(required=False)
     account_id = fields.Integer(required=True)
-    product_ids = fields.List(fields.Integer(),required=False)
+    product_ids = fields.List(fields.Integer(),required=True)
 
     class Meta:
         fields = ("order_date", "status", "close_date", "account_id", "product_ids", "id")
@@ -70,7 +71,7 @@ class Customer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(350), nullable=False)
-    date_of_birth = db.Column(db.Date)
+    date_of_birth = db.Column(db.Date, nullable=True)
     address = db.Column(db.String(350), nullable=False)
     account_id = db.Column(db.Integer, db.ForeignKey('CustomerAccounts.id'))
 
@@ -83,7 +84,7 @@ class CustomerAccount(db.Model):
     customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id'))
 
 customer_orders = db.Table('Customer_Orders',
-                           db.Column('product_id', db.Integer, db.ForeignKey('Products.id'), primary_key=True),
+                           db.Column('product_ids', db.Integer, db.ForeignKey('Products.id'), primary_key=True),
                            db.Column('order_id', db.Integer, db.ForeignKey('Orders.id'), primary_key=True)
                            )
 
@@ -92,14 +93,24 @@ class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     order_date = db.Column(db.Date, nullable=False)
     status = db.Column(db.String(350), nullable=False)
-    close_date = db.Column(db.Date)
-    order_total = db.Column(db.Float(10,2), nullable=False, default=0.0)
+    close_date = db.Column(db.Date, nullable=True)
+    order_total = db.Column(db.Float(10,2),nullable=False, default=0.0)
     account_id = db.Column(db.Integer, db.ForeignKey('CustomerAccounts.id'))
 
     products = db.relationship('Product', secondary=customer_orders, backref=db.backref('orders', lazy=True))
 
     def calculate_total(self):
         self.order_total = sum(product.price for product in self.products)
+
+    def update_inventory(self):
+        warnings = []
+        for product in self.products:
+            product.current_inventory -= 1
+            if product.current_inventory <= product.par_inventory:
+                warnings.append(f"Product '{product.name}' stock is below par levels.")
+        
+        if warnings:
+            return warnings
 
 class Product(db.Model):
     __tablename__ = "Products"
@@ -184,7 +195,8 @@ def add_customer_account():
     
     new_customer_account = CustomerAccount(
                                             username = customer_account_data['username'],
-                                            password = customer_account_data['password']
+                                            password = customer_account_data['password'],
+                                            customer_id = customer_account_data['customer_id'],
                                             )
     
     db.session.add(new_customer_account)
@@ -202,6 +214,7 @@ def update_customer_account(id):
     
     customer_account.username = customer_account_data['username']
     customer_account.password = customer_account_data['password']
+    customer_account.customer_id = customer_account_data['customer_id']
     db.session.commit()
     return jsonify({"message": "Customer account updated successfully."}), 200
 
@@ -228,19 +241,20 @@ def add_order():
         product_ids = order_data.get('product_ids', [])
         products = Product.query.filter(Product.id.in_(product_ids)).all()
 
+
         if not products:
             return jsonify({"error": "No valid products found for the order."}), 400
     
         new_order = Order(
                             order_date = order_data['order_date'],
                             status = order_data['status'],
-                            close_date = order_data['close_date'],
-                            order_total = order_data['order_total'],
+                            close_date = order_data.get('close_date'),
                             account_id = order_data['account_id']
                         )
         
         new_order.products = products
         new_order.calculate_total()
+        new_order.update_inventory()
 
         db.session.add(new_order)
         db.session.commit()
